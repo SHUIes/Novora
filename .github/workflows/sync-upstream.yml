@@ -1,0 +1,53 @@
+name: Sync upstream (daily) -> PR
+
+on:
+  schedule:
+    - cron: "0 1 * * *" # 每天 01:00 UTC（中国时间 09:00）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/PikaNova/Novora.git
+          git fetch upstream main
+
+      - name: Create/update sync branch by merging upstream/main
+        run: |
+          BRANCH="sync/upstream-main"
+          git checkout -B "$BRANCH" origin/main
+          git merge --no-edit upstream/main || true
+
+      - name: Push sync branch
+        run: |
+          BRANCH="sync/upstream-main"
+          git push -u origin "$BRANCH" --force-with-lease
+
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          branch: sync/upstream-main
+          title: "chore: sync upstream main"
+          body: |
+            This PR was automatically created by GitHub Actions.
+            It merges upstream (PikaNova/Novora) main into this fork.
+          labels: upstream-sync
