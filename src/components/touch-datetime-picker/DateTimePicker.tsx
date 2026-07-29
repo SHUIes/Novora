@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { TapButton } from "./TapButton"
@@ -6,6 +6,7 @@ import { SelectionPreview } from "./SelectionPreview"
 import { resolveDensity } from "./useDensity"
 import { clampParts, daysInMonth, pad2, MON, SUN } from "./utils"
 import type { DateTimeParts, Field, DateTimePickerProps } from "./types"
+import WheelColumn from "../WheelColumn"
 import "./DateTimePicker.css"
 
 const NEXT: Partial<Record<Field, Field>> = { year: "month", month: "day" }
@@ -14,53 +15,6 @@ function segmentsFor(mode: string, weekdayEnabled: boolean): Field[] {
   if (mode === "time") return ((weekdayEnabled ? ["weekday"] : []) as Field[]).concat(["hour", "minute"])
   return ["year", "month", "day", "hour", "minute"]
 }
-
-interface TimeWheelProps {
-  label: string
-  values: number[]
-  value: number
-  onChange: (value: number) => void
-}
-
-const TimeWheel = forwardRef<HTMLDivElement, TimeWheelProps>(function TimeWheel(
-  { label, values, value, onChange },
-  ref,
-) {
-  return (
-    <div className="tdp-time-wheel">
-      <span className="tdp-time-wheel__label">选择{label}</span>
-      <div
-        className="tdp-time-wheel__list"
-        ref={ref}
-        aria-label={`选择${label}`}
-        onWheel={(event) => {
-          event.stopPropagation()
-          if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) event.preventDefault()
-        }}
-        onScroll={(event) => {
-          // Some Chromium builds still expose a horizontal scrollbar when a
-          // selected wheel item has visual overflow. Keep this control purely
-          // vertical even for a two-finger trackpad gesture.
-          if (event.currentTarget.scrollLeft !== 0) event.currentTarget.scrollLeft = 0
-          const index = Math.max(0, Math.min(values.length - 1, Math.round(event.currentTarget.scrollTop / 48)))
-          const next = values[index]
-          if (next !== value) onChange(next)
-        }}
-      >
-        {values.map((item) => (
-          <button
-            type="button"
-            key={item}
-            className={item === value ? "is-selected" : ""}
-            onClick={() => onChange(item)}
-          >
-            {pad2(item)}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-})
 
 export function DateTimePicker(props: DateTimePickerProps) {
   const {
@@ -101,8 +55,6 @@ export function DateTimePicker(props: DateTimePickerProps) {
   const [yearCenter, setYearCenter] = useState(draft.year)
   const [error, setError] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
-  const hourWheelRef = useRef<HTMLDivElement | null>(null)
-  const minuteWheelRef = useRef<HTMLDivElement | null>(null)
   const hourValues = useMemo(
     () => Array.from({ length: 24 }, (_, hour) => hour).filter((hour) => hour >= hourRange[0] && hour <= hourRange[1]),
     [hourRange[0], hourRange[1]],
@@ -124,19 +76,6 @@ export function DateTimePicker(props: DateTimePickerProps) {
   useEffect(() => {
     panelRef.current?.focus()
   }, [])
-
-  useEffect(() => {
-    if (field !== "hour" && field !== "minute") return
-    const hourIndex = Math.max(0, hourValues.indexOf(draft.hour))
-    const minuteIndex = Math.max(0, minuteValues.indexOf(draft.minute))
-    const frame = window.requestAnimationFrame(() => {
-      if (hourWheelRef.current) hourWheelRef.current.scrollTop = hourIndex * 48
-      if (minuteWheelRef.current) minuteWheelRef.current.scrollTop = minuteIndex * 48
-    })
-    return () => window.cancelAnimationFrame(frame)
-    // Reposition only on entry. Updating scrollTop while a user drags the
-    // wheel cancels touch inertia and makes the picker appear to freeze.
-  }, [field, hourValues, minuteValues])
 
   function dismissAfterPointerAction(callback: () => void) {
     // Closing a portal during pointerup can retarget the browser's trailing
@@ -349,27 +288,9 @@ export function DateTimePicker(props: DateTimePickerProps) {
     if (isTimeSelection) {
       return (
         <div className="tdp-time-wheels" aria-label="选择小时和分钟">
-          <TimeWheel
-            ref={hourWheelRef}
-            label="时"
-            values={hourValues}
-            value={draft.hour}
-            onChange={(hour) => {
-              setField("hour")
-              patch({ hour })
-            }}
-          />
+          <div className="tdp-time-wheel"><span className="tdp-time-wheel__label">选择时</span><WheelColumn className="tdp-time-wheel__list" ariaLabel="选择小时" values={hourValues} value={draft.hour} onChange={(hour) => { setField("hour"); patch({ hour }) }} /></div>
           <span className="tdp-time-wheels__colon" aria-hidden="true">:</span>
-          <TimeWheel
-            ref={minuteWheelRef}
-            label="分"
-            values={minuteValues}
-            value={draft.minute}
-            onChange={(minute) => {
-              setField("minute")
-              patch({ minute })
-            }}
-          />
+          <div className="tdp-time-wheel"><span className="tdp-time-wheel__label">选择分</span><WheelColumn className="tdp-time-wheel__list" ariaLabel="选择分钟" values={minuteValues} value={draft.minute} onChange={(minute) => { setField("minute"); patch({ minute }) }} /></div>
         </div>
       )
     }

@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import HelpTip from "./HelpTip";
 import {
   fetchDeviceBindings,
   revokeDevice,
   sendDeviceCommand,
+  getClassBindingInstanceId,
   type DeviceBindingInfo,
   type DeviceCommand,
   type PluginBindingInfo,
@@ -14,6 +16,9 @@ import { notify } from "../services/notify";
 import { confirmDialog } from "../services/appDialog";
 import ClassMultiPicker, { type ClassPickerOption } from "./ClassMultiPicker";
 import InlineSelect from "./InlineSelect";
+import DesignPolicyManager from "./DesignPolicyManager";
+import { getAdminUser, logoutAdmin } from "../services/examService";
+import DeviceDetailDialog from "./DeviceDetailDialog";
 
 const ONLINE_MS = 90_000;
 const formatTime = (value: number) =>
@@ -42,9 +47,14 @@ type DeviceGroup = {
 
 export default function DeviceStatusPanel({
   canRevoke = true,
+  canBind = false,
+  canEditDesign = false,
 }: {
   canRevoke?: boolean;
+  canBind?: boolean;
+  canEditDesign?: boolean;
 }) {
+  const navigate = useNavigate();
   const [bindings, setBindings] = useState<DeviceBindingInfo[]>([]);
   const [plugins, setPlugins] = useState<PluginBindingInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,9 +62,28 @@ export default function DeviceStatusPanel({
   const [query, setQuery] = useState("");
   const [gradeFilter, setGradeFilter] = useState("*");
   const [classFilters, setClassFilters] = useState<string[]>([]);
+  const [deviceCategory, setDeviceCategory] = useState<"active" | "removed">(
+    "active",
+  );
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [detailKey, setDetailKey] = useState("");
   const [now, setNow] = useState(Date.now());
   const { grades, classes } = getAppSettings().exam;
+  const currentInstanceId = getClassBindingInstanceId();
+  const currentAdmin = getAdminUser();
+  const currentAdminScope = useMemo(() => {
+    if (!currentAdmin) return "管理范围未记录";
+    if (currentAdmin.scopes.some((scope) => scope.type === "all")) return "全校";
+    const names = currentAdmin.scopes.map((scope) => scope.type === "grade"
+      ? grades.find((grade) => grade.id === scope.gradeId)?.name
+      : classDisplayName(grades, classes, scope.classId));
+    return names.filter(Boolean).join("、") || "未分配范围";
+  }, [classes, currentAdmin, grades]);
+  const selectableClasses = useMemo(() => {
+    if (!currentAdmin || currentAdmin.permissions.includes("*") || currentAdmin.scopes.some(scope => scope.type === "all")) return classes;
+    return classes.filter(item => currentAdmin.scopes.some(scope => scope.type === "grade" ? scope.gradeId === item.gradeId : scope.type === "class" && scope.classId === item.id));
+  }, [classes, currentAdmin]);
+  const selectableGrades = useMemo(() => grades.filter(grade => selectableClasses.some(item => item.gradeId === grade.id)), [grades, selectableClasses]);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -144,6 +173,20 @@ export default function DeviceStatusPanel({
     [classFilters, classes, gradeFilter, grades, groups, query],
   );
 
+  const isRemovedGroup = (item: DeviceGroup) =>
+    item.dashboard?.revoked === true &&
+    item.plugins.every((plugin) => !plugin.paired);
+  const activeFiltered = useMemo(
+    () => filtered.filter((item) => !isRemovedGroup(item)),
+    [filtered],
+  );
+  const removedFiltered = useMemo(
+    () => filtered.filter(isRemovedGroup),
+    [filtered],
+  );
+  const categoryFiltered =
+    deviceCategory === "removed" ? removedFiltered : activeFiltered;
+
   const dashboardOnline = (item: DeviceGroup) =>
     !!item.dashboard &&
     !item.dashboard.revoked &&
@@ -165,7 +208,7 @@ export default function DeviceStatusPanel({
     );
   const orderedFiltered = useMemo(
     () =>
-      [...filtered].sort((a, b) => {
+      [...categoryFiltered].sort((a, b) => {
         const aOnline = groupOnline(a);
         const bOnline = groupOnline(b);
         if (aOnline !== bOnline) return aOnline ? -1 : 1;
@@ -173,8 +216,13 @@ export default function DeviceStatusPanel({
         if (recentFirst !== 0) return recentFirst;
         return (a.instanceId || a.key).localeCompare(b.instanceId || b.key, "zh-CN");
       }),
-    [filtered, now],
+    [categoryFiltered, now],
   );
+  const currentGroup = groups.find(item => item.instanceId === currentInstanceId);
+  const displayedGroups = currentGroup
+    ? [currentGroup, ...orderedFiltered.filter(item => item.key !== currentGroup.key)]
+    : orderedFiltered;
+  const detailDevice = groups.find(item => item.key === detailKey);
   const onlineCount = groups.filter(groupOnline).length;
 
   const remove = async (item: DeviceGroup) => {
@@ -194,6 +242,11 @@ export default function DeviceStatusPanel({
         item.dashboard?.instanceId || "",
         item.plugins.map((plugin) => plugin.pluginInstanceId),
       );
+      if (item.dashboard?.instanceId === currentInstanceId) {
+        logoutAdmin();
+        navigate("/login?next=%2Fadmin&deviceRemoved=1", { replace: true });
+        return;
+      }
       await load(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "删除设备失败");
@@ -223,6 +276,14 @@ export default function DeviceStatusPanel({
     const failed = targets.filter(
       (_, index) => results[index].status === "rejected",
     );
+    const currentIndex = targets.findIndex(
+      (item) => item.dashboard?.instanceId === currentInstanceId,
+    );
+    if (currentIndex >= 0 && results[currentIndex]?.status === "fulfilled") {
+      logoutAdmin();
+      navigate("/login?next=%2Fadmin&deviceRemoved=1", { replace: true });
+      return;
+    }
     setSelectedKeys(failed.map((item) => item.key));
     await load(true);
     if (!failed.length) {
@@ -292,6 +353,7 @@ export default function DeviceStatusPanel({
           刷新
         </button>
       </div>
+      <DesignPolicyManager grades={grades} classes={classes} devices={bindings} canEdit={canEditDesign} />
       <div className="device-status__stats">
         <div>
           <span>设备总数</span>
@@ -361,14 +423,34 @@ export default function DeviceStatusPanel({
           />
         </details>
       </div>
-      {canRevoke && (
+      <div className="device-status__categories" role="tablist" aria-label="设备分类">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={deviceCategory === "active"}
+          className={deviceCategory === "active" ? "is-active" : ""}
+          onClick={() => setDeviceCategory("active")}
+        >
+          有效设备 <span>{activeFiltered.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={deviceCategory === "removed"}
+          className={deviceCategory === "removed" ? "is-active" : ""}
+          onClick={() => setDeviceCategory("removed")}
+        >
+          已删除设备 <span>{removedFiltered.length}</span>
+        </button>
+      </div>
+      {canRevoke && deviceCategory === "active" && (
         <div className="device-status__batch">
           <label>
             <input
               type="checkbox"
               checked={
-                filtered.length > 0 &&
-                filtered.every((item) => selectedKeys.includes(item.key))
+                activeFiltered.length > 0 &&
+                activeFiltered.every((item) => selectedKeys.includes(item.key))
               }
               onChange={(event) =>
                 setSelectedKeys(
@@ -376,11 +458,11 @@ export default function DeviceStatusPanel({
                     ? [
                         ...new Set([
                           ...selectedKeys,
-                          ...filtered.map((item) => item.key),
+                          ...activeFiltered.map((item) => item.key),
                         ]),
                       ]
                     : selectedKeys.filter(
-                        (key) => !filtered.some((item) => item.key === key),
+                        (key) => !activeFiltered.some((item) => item.key === key),
                       ),
                 )
               }
@@ -397,42 +479,48 @@ export default function DeviceStatusPanel({
           </button>
         </div>
       )}
+      {currentGroup && <div className="device-status__current-note">当前设备固定显示在列表首位，不受搜索和班级筛选影响。</div>}
       {error && <div className="admin-error">{error}</div>}
       {loading && (
         <div className="device-status__loading">正在读取设备状态…</div>
       )}
-      {!loading && filtered.length === 0 && (
+      {!loading && displayedGroups.length === 0 && (
         <div className="admin-empty">
-          <p>暂无符合条件的设备</p>
+          <p>{deviceCategory === "removed" ? "暂无已删除设备" : "暂无符合条件的有效设备"}</p>
         </div>
       )}
-      {filtered.length > 0 && (
+      {displayedGroups.length > 0 && (
         <div className="device-status__table">
           <div className="device-status__table-head">
-            <span>设备与班级</span>
+            <span>设备角色与绑定</span>
             <span>实时状态</span>
             <span>最近在线</span>
             <span>操作</span>
           </div>
           <div className="device-status__list">
-            {orderedFiltered.map((item) => {
+            {displayedGroups.map((item) => {
               const dashboard = item.dashboard;
               const temporary =
                 !!dashboard &&
                 (dashboard.currentExam.includes("临时考试") ||
                   dashboard.status === "temporary-paused");
               const lastSeenAt = groupLastSeenAt(item);
-              const removed =
-                dashboard?.revoked === true &&
-                item.plugins.every((plugin) => !plugin.paired);
+              const removed = isRemovedGroup(item);
               const isDashboardOnline = dashboardOnline(item);
+              const isCurrentDevice = item.instanceId === currentInstanceId;
+              const managementRoleName = dashboard?.managementRoleName || (isCurrentDevice ? currentAdmin?.roleName : "") || "";
+              const managementScope = dashboard?.managementScopeLabel || (isCurrentDevice ? currentAdminScope : "管理范围未记录");
+              const deviceRoleTitle = dashboard?.isManagement ? "管理设备" : dashboard ? "班级考试端" : "ClassIsland 插件";
+              const assignment = dashboard?.isManagement
+                ? `${managementRoleName || "管理身份未记录"} · ${managementScope}`
+                : item.classId ? classDisplayName(grades, classes, item.classId) : "未绑定班级";
               return (
                 <div
-                  className={`device-status__row${removed ? " is-revoked" : ""}`}
+                  className={`device-status__row${removed ? " is-revoked" : ""}${isCurrentDevice ? " is-current" : ""}`}
                   key={item.key}
                 >
-                  <div className={`device-status__instance${canRevoke ? " is-selectable" : ""}`}>
-                    {canRevoke && (
+                  <div className={`device-status__instance${canRevoke && !removed ? " is-selectable" : ""}`}>
+                    {canRevoke && !removed && (
                       <input
                         type="checkbox"
                         checked={selectedKeys.includes(item.key)}
@@ -446,11 +534,11 @@ export default function DeviceStatusPanel({
                         aria-label={`选择设备 ${item.instanceId}`}
                       />
                     )}
-                    <strong className={item.classId ? "" : "is-unbound"}>
-                      {item.classId
-                        ? classDisplayName(grades, classes, item.classId)
-                        : "未绑定班级"}
+                    <strong className={item.classId || dashboard?.isManagement ? "" : "is-unbound"}>
+                      {deviceRoleTitle}
+                      {isCurrentDevice && <em className="device-status__current-badge">当前设备</em>}
                     </strong>
+                    <small className="device-status__management-scope">{assignment}</small>
                     {dashboard ? (
                       <code title={dashboard.instanceId}>
                         看板 {dashboard.instanceId}
@@ -505,7 +593,7 @@ export default function DeviceStatusPanel({
                     </div>
                     <span>
                       {isDashboardOnline && dashboard?.currentSubject
-                        ? `${dashboard.currentExam} · ${dashboard.currentSubject}`
+                        ? `${dashboard.status === "waiting" ? "下一场" : dashboard.status === "temporary-paused" ? "已暂停" : "正在进行"}：${dashboard.currentExam} · ${dashboard.currentSubject}`
                         : dashboard
                           ? `页面 ${dashboard.page || "未知"} · v${dashboard.clientVersion || "未知"}`
                           : "插件已接入，等待 Novora 看板客户端心跳"}
@@ -543,23 +631,17 @@ export default function DeviceStatusPanel({
                   <div className="device-status__updated">
                     <time>{formatTime(lastSeenAt)}</time>
                   </div>
-                  {canRevoke ? (
-                    <button
-                      className="admin-btn admin-btn--danger"
-                      onClick={() => void remove(item)}
-                      disabled={removed}
-                    >
-                      {removed ? "已删除" : "删除"}
-                    </button>
-                  ) : (
-                    <span className="device-status__readonly">只读</span>
-                  )}
+                  <div className="device-status__actions">
+                    <button className="admin-btn" onClick={() => setDetailKey(item.key)}>详情</button>
+                    {canRevoke ? <button className="admin-btn admin-btn--danger" onClick={() => void remove(item)} disabled={removed}>{removed ? "已删除" : "删除"}</button> : <span className="device-status__readonly">只读</span>}
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
       )}
+      {detailDevice && <DeviceDetailDialog device={detailDevice} grades={grades} classes={classes} selectableGrades={selectableGrades} selectableClasses={selectableClasses} currentInstanceId={currentInstanceId} canBind={canBind} onClose={() => setDetailKey("")} onUpdated={() => { setDetailKey(""); void load(true); }} />}
     </main>
   );
 }

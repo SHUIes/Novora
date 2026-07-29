@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DateTimeField } from "./touch-datetime-picker";
+import WheelColumn from "./WheelColumn";
 import "../styles/time-range-picker.css";
 
 type RangeMode = "time" | "datetime";
@@ -111,17 +112,12 @@ export default function TimeRangePickerModal({
   const [draftStart, setDraftStart] = useState(startValue);
   const [draftEnd, setDraftEnd] = useState(endValue);
   const [crossDayEnabled, setCrossDayEnabled] = useState(initialCrossDay);
-  const hourRef = useRef<HTMLDivElement | null>(null);
-  const minuteRef = useRef<HTMLDivElement | null>(null);
   const modalRef = useRef<HTMLElement | null>(null);
   const anchorElementRef = useRef<HTMLElement | null>(null);
   const initialRangeRef = useRef({ startValue, endValue, endNextDay: initialCrossDay });
   const previewChangeRef = useRef(onPreviewChange);
   const previewReadyRef = useRef(false);
   const previewReadyFrameRef = useRef<number | null>(null);
-  const wheelSyncingRef = useRef(false);
-  const wheelSyncFrameRef = useRef<number | null>(null);
-  const wheelChangeFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     previewChangeRef.current = onPreviewChange;
@@ -229,22 +225,9 @@ export default function TimeRangePickerModal({
           ? "结束时间必须晚于开始时间；如需跨日，请先启用跨日考试。"
           : "请重新确认开始日期、结束日期和时间。";
   const requiresCrossDay = mode === "datetime" ? datesDiffer : rawDuration <= 0;
-
-  useEffect(() => {
-    if (!open || (step !== "start" && step !== "end")) return;
-    wheelSyncingRef.current = true;
-    const frame = requestAnimationFrame(() => {
-      if (hourRef.current) hourRef.current.scrollTop = activeParts.hour * ITEM_HEIGHT;
-      if (minuteRef.current) minuteRef.current.scrollTop = activeParts.minute * ITEM_HEIGHT;
-      wheelSyncFrameRef.current = requestAnimationFrame(() => {
-        wheelSyncingRef.current = false;
-      });
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      if (wheelSyncFrameRef.current !== null) cancelAnimationFrame(wheelSyncFrameRef.current);
-    };
-  }, [open, step, target]);
+  const directEndSelection = presets.length === 0;
+  const stepNumber = step === "start" ? 1 : directEndSelection ? 2 : step === "duration" ? 2 : 3;
+  const stepCount = directEndSelection ? 2 : 3;
 
   if (!open) return null;
 
@@ -255,16 +238,6 @@ export default function TimeRangePickerModal({
     const next = serialize({ ...parts, [part]: value }, mode);
     if (target === "start") setDraftStart(next);
     else setDraftEnd(next);
-  };
-
-  const handleWheelScroll = (part: "hour" | "minute", element: HTMLDivElement) => {
-    if (element.scrollLeft) element.scrollLeft = 0;
-    if (wheelSyncingRef.current) return;
-    if (wheelChangeFrameRef.current !== null) cancelAnimationFrame(wheelChangeFrameRef.current);
-    wheelChangeFrameRef.current = requestAnimationFrame(() => {
-      const maximum = part === "hour" ? 23 : 59;
-      updatePart(part, Math.max(0, Math.min(maximum, Math.round(element.scrollTop / ITEM_HEIGHT))));
-    });
   };
 
   const updateDate = (date: string) => {
@@ -301,7 +274,7 @@ export default function TimeRangePickerModal({
     <div className="time-range-overlay" role="presentation" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
       <section ref={modalRef} className="time-range-modal" role="dialog" aria-modal="true" aria-label={title}>
         <header className="time-range-head">
-          <div><h2>{title}</h2><p>步骤 {step === "start" ? "1" : step === "duration" ? "2" : "3"} / 3</p></div>
+          <div><h2>{title}</h2><p>步骤 {stepNumber} / {stepCount}</p></div>
           <button type="button" onClick={cancelAndRevert}>取消</button>
         </header>
 
@@ -344,9 +317,9 @@ export default function TimeRangePickerModal({
         {(step === "start" || step === "end") && <section className="time-range-wheel-panel">
           <div><strong>设置{target === "start" ? "开始" : "结束"}时间</strong><span>上下滚动小时和分钟</span></div>
           <div className="time-range-wheels">
-            <div className="time-range-wheel"><span>时</span><div ref={hourRef} onWheel={(event) => { event.stopPropagation(); if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) event.preventDefault(); }} onScroll={(event) => handleWheelScroll("hour", event.currentTarget)}>{HOURS.map((hour) => <button type="button" key={hour} className={activeParts.hour === hour ? "is-selected" : ""} onClick={() => updatePart("hour", hour)}>{pad(hour)}</button>)}</div></div>
+            <div className="time-range-wheel"><span>时</span><WheelColumn itemHeight={ITEM_HEIGHT} values={HOURS} value={activeParts.hour} onChange={(hour) => updatePart("hour", hour)} ariaLabel="选择小时" /></div>
             <b>:</b>
-            <div className="time-range-wheel"><span>分</span><div ref={minuteRef} onWheel={(event) => { event.stopPropagation(); if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) event.preventDefault(); }} onScroll={(event) => handleWheelScroll("minute", event.currentTarget)}>{MINUTES.map((minute) => <button type="button" key={minute} className={activeParts.minute === minute ? "is-selected" : ""} onClick={() => updatePart("minute", minute)}>{pad(minute)}</button>)}</div></div>
+            <div className="time-range-wheel"><span>分</span><WheelColumn itemHeight={ITEM_HEIGHT} values={MINUTES} value={activeParts.minute} onChange={(minute) => updatePart("minute", minute)} ariaLabel="选择分钟" /></div>
           </div>
         </section>
         }
@@ -356,8 +329,8 @@ export default function TimeRangePickerModal({
         {step !== "start" && !validRange && <div className="time-range-error" role="alert">{rangeError}</div>}
 
         <footer>
-          {step === "start" ? <button type="button" onClick={cancelAndRevert}>取消</button> : <button type="button" onClick={() => { setTarget("start"); setStep(step === "end" ? "duration" : "start"); }}>上一步</button>}
-          {step === "start" ? <button type="button" className="is-primary" onClick={() => setStep("duration")}>选择时长</button> : <button type="button" className="is-primary" aria-disabled={!validRange} onClick={() => { if (validRange) onConfirm(draftStart, draftEnd, crossDayEnabled); }}>确认时间</button>}
+          {step === "start" ? <button type="button" onClick={cancelAndRevert}>取消</button> : <button type="button" onClick={() => { setTarget("start"); setStep(step === "end" && !directEndSelection ? "duration" : "start"); }}>上一步</button>}
+          {step === "start" ? <button type="button" className="is-primary" onClick={() => { if (directEndSelection) setTarget("end"); setStep(directEndSelection ? "end" : "duration"); }}>{directEndSelection ? "设置结束时间" : "选择时长"}</button> : <button type="button" className="is-primary" aria-disabled={!validRange} onClick={() => { if (validRange) onConfirm(draftStart, draftEnd, crossDayEnabled); }}>确认时间</button>}
         </footer>
       </section>
     </div>

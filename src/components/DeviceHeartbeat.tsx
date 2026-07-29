@@ -8,6 +8,8 @@ import { nowMs, parseZonedTime } from '../utils/timeSource';
 import { endTemporaryExam, extendTemporaryExam, getTemporaryExam, setTemporaryExamPaused } from '../services/temporaryExam';
 import { notify } from '../services/notify';
 import { pluginInstanceFromSearch, sendPluginViewerHeartbeat } from '../services/pluginPairing';
+import { updateExamSettings } from '../utils/appSettings';
+import { logoutAdmin } from '../services/examService';
 
 export default function DeviceHeartbeat() {
   const { pathname, search } = useLocation();
@@ -24,18 +26,35 @@ export default function DeviceHeartbeat() {
       const settings = getAppSettings();
       const temporary = getTemporaryExam();
       const temporaryActive = temporary && temporary.status !== 'ended' && new Date(temporary.endTime).getTime() > now;
-      const currentIsTemporary = current?.kind === 'temporary';
+      const reportedExam = current ?? next;
+      const reportedKind = reportedExam?.kind;
+      const reportedExamName = !reportedExam ? ''
+        : reportedKind === 'temporary' ? `${reportedExam.name} - 临时考试`
+        : reportedKind === 'weekly' ? '周测'
+        : reportedExam.majorName || settings.exam.title || '大型考试';
       void sendDeviceHeartbeat({
         page: pathname,
         clientVersion: APP_VERSION,
-        status: current ? 'exam-running' : temporaryActive && temporary.status === 'paused' ? 'temporary-paused' : next ? 'waiting' : 'idle',
-        currentExam: currentIsTemporary ? `${current.name} - 临时考试` : current?.majorName || settings.exam.title,
-        currentSubject: current?.name ?? next?.name ?? '',
-        examStart: current?.startTime ?? next?.startTime ?? '',
-        examEnd: current?.endTime ?? next?.endTime ?? '',
+        status: temporaryActive && temporary.status === 'paused' ? 'temporary-paused' : current ? 'exam-running' : next ? 'waiting' : 'idle',
+        currentExam: reportedExamName,
+        currentSubject: reportedExam?.name ?? '',
+        examStart: reportedExam?.startTime ?? '',
+        examEnd: reportedExam?.endTime ?? '',
         acknowledgedCommandId,
       }).then(result => {
-        if (result.revoked && pathname !== '/') { navigate('/', { replace: true }); return; }
+        if (result.revoked) {
+          logoutAdmin();
+          const managementRoute = pathname === '/admin' || pathname.startsWith('/admin/') || pathname === '/settings';
+          const bindingRoute = pathname === '/exam' || pathname === '/preferences' || pathname === '/local-settings' || pathname === '/plugin/connect';
+          if (managementRoute) navigate('/login?next=%2Fadmin&deviceRemoved=1', { replace: true });
+          else if (bindingRoute) navigate('/', { replace: true });
+          return;
+        }
+        if (result.binding && !result.binding.revoked) {
+          const currentBinding = getAppSettings().exam;
+          if (currentBinding.selectedGradeId !== result.binding.gradeId || currentBinding.selectedClassId !== result.binding.classId) updateExamSettings({ selectedGradeId: result.binding.gradeId, selectedClassId: result.binding.classId });
+          if (result.binding.isManagement && pathname === '/exam') { navigate('/', { replace: true }); return; }
+        }
         if (!result.command || result.command.id === acknowledgedCommandId) return;
         if (result.command.action === 'pause') setTemporaryExamPaused(true);
         if (result.command.action === 'resume') setTemporaryExamPaused(false);
