@@ -51,7 +51,7 @@ export default function Editorial({ vm, onDismissNotification, onBack, quickMenu
           </div>
         )}
 
-        <FitText as="div" className="ed__clock">
+        <FitText className="ed__clock" minScale={0.34}>
           <span className="ed__hm">{hm}</span>
           {phase === 'ended'
             ? <span className="ed__ended">已结束</span>
