@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Watermark from "../components/Watermark";
+import AdminModalPortal from '../components/AdminModalPortal';
 import type {
   ExamItem,
   MajorExam,
@@ -42,6 +43,7 @@ import {
   queuePendingExamSync,
 } from "../services/examOutbox";
 import { normalizeExamItems } from "../utils/examSchedule";
+import { getQuickMajorDisplayStatus } from "../utils/majorDisplayStatus";
 import { recordSyncConflict } from "../services/offlineStore";
 import { fetchAnnouncements } from "../services/announcements";
 import type { Announcement } from "../services/announcements";
@@ -323,6 +325,11 @@ export default function AdminPage() {
   const [deleteMajorOpen, setDeleteMajorOpen] = useState(false);
   const [majorPrintOpen, setMajorPrintOpen] = useState(false);
   const [quickMajorOpen, setQuickMajorOpen] = useState(false);
+  const [adminNow, setAdminNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setAdminNow(Date.now()), 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (majorModal) setMajorModalStep(0);
   }, [majorModal !== null]);
@@ -2012,7 +2019,7 @@ export default function AdminPage() {
       !major.endedAt &&
       major.items.some(
         (item) =>
-          item.enabled && new Date(item.endTime).getTime() >= Date.now(),
+          item.enabled && new Date(item.endTime).getTime() >= adminNow,
       ),
   );
 
@@ -2528,7 +2535,16 @@ export default function AdminPage() {
                   </div>
                   {quickScopedMajors.map((major) => {
                     const item = major.items.find((value) => value.enabled);
-                    const running = item && phase(item) === "ongoing";
+                    const running =
+                      item &&
+                      new Date(item.startTime).getTime() <= adminNow &&
+                      new Date(item.endTime).getTime() > adminNow;
+                    const displayStatus = getQuickMajorDisplayStatus(
+                      major,
+                      orderedScopedMajors,
+                      adminNow,
+                      visibleClasses,
+                    );
                     return (
                       <article key={major.id}>
                         <div>
@@ -2539,6 +2555,14 @@ export default function AdminPage() {
                               : "已结束"}
                             {major.priorityOverSchedule ? " · 优先覆盖" : ""}
                           </small>
+                          {displayStatus && (
+                            <small
+                              className={`quick-major-running__display is-${displayStatus.tone}`}
+                            >
+                              {displayStatus.label}
+                              <span>{displayStatus.detail}</span>
+                            </small>
+                          )}
                         </div>
                         <span className={running ? "is-running" : ""}>
                           {running ? "进行中" : "待开始"}
@@ -2859,7 +2883,7 @@ export default function AdminPage() {
         ))}
       </nav>
       {gradeAdminSetupPromptOpen && (
-        <div className="admin-modal-overlay">
+        <AdminModalPortal className="admin-modal-overlay">
           <div
             className="admin-modal"
             onClick={(event) => event.stopPropagation()}
@@ -2896,10 +2920,10 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {majorModal && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => setMajorModal(null))}
         >
@@ -2942,7 +2966,7 @@ export default function AdminPage() {
               {majorModalStep === 0 ? <button className="admin-btn admin-btn--primary admin-workflow-actions-spacer" onClick={() => { if (!majorModal.name.trim()) { setMajorError("请输入大型考试名称"); return; } setMajorError(""); setMajorModalStep(1); }}>下一步</button> : <button className="admin-btn admin-btn--primary admin-workflow-actions-spacer" onClick={commitMajorModal}>{majorModal.next === "import" ? "创建并继续导入" : "确认保存"}</button>}
             </div>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {quickMajorOpen && (
         <QuickMajorPublishModal
@@ -2985,7 +3009,7 @@ export default function AdminPage() {
         />
       )}
       {deleteMajorOpen && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => setDeleteMajorOpen(false))}
         >
@@ -3010,10 +3034,10 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {deleteTarget && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => setDeleteTarget(null))}
         >
@@ -3037,10 +3061,10 @@ export default function AdminPage() {
               </button>
             </div>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {alertsOpen && can("alerts.read") && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => setAlertsOpen(false))}
         >
@@ -3375,10 +3399,10 @@ export default function AdminPage() {
               )}
             </fieldset>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {announceOpen && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => setAnnounceOpen(false))}
         >
@@ -3409,10 +3433,10 @@ export default function AdminPage() {
               <AnnouncementList announcements={anns} formatTime={fmtAnnTime} />
             )}
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {importOpen && hasScopedMajor && (
-        <div
+        <AdminModalPortal
           className="admin-modal-overlay"
           {...backdropProps(() => {
             setImportOpen(false);
@@ -3439,7 +3463,7 @@ export default function AdminPage() {
               {majorImportStep === 0 ? <button className="admin-btn admin-btn--primary admin-workflow-actions-spacer" onClick={() => setMajorImportStep(1)}>下一步，粘贴 JSON</button> : majorImportStep === 1 ? <button className="admin-btn admin-btn--primary admin-workflow-actions-spacer" onClick={validateMajorImportJson}>校验并预览</button> : <button className="admin-btn admin-btn--primary admin-workflow-actions-spacer" disabled={!majorImportPreview?.items.some((item) => item.include)} onClick={importJson}>确认导入 {majorImportPreview?.items.filter((item) => item.include).length || 0} 项</button>}
             </div>
           </div>
-        </div>
+        </AdminModalPortal>
       )}
       {editing && <TimeRangePickerModal
         open={majorTimeFlowOpen}
