@@ -1058,7 +1058,17 @@ export default function AdminPage() {
       setClasses(next.classes);
       setWeeklyConflictPolicy(next.weeklyConflictPolicy);
       weeklyStateRef.current = next;
-      updateExamSettings({ ...next, updatedAt: Date.now() });
+      const now = Date.now();
+      updateExamSettings({ ...next, updatedAt: now });
+      const queued = getPendingExamSync();
+      const basePayload =
+        queued?.payload ??
+        buildPayload(stateRef.current.majors, stateRef.current.activeMajorId);
+      queuePendingExamSync({
+        payload: { ...basePayload, ...next },
+        baseSnapshot: queued?.baseSnapshot ?? getCloudSnapshot(),
+        savedAt: now,
+      });
       pendingRef.current = true;
       if (weeklySaveTimer.current) clearTimeout(weeklySaveTimer.current);
       if (immediate) {

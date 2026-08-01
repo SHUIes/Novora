@@ -265,20 +265,20 @@ export default function DeviceStatusPanel({
       }))
     )
       return;
-    const results = await Promise.allSettled(
-      targets.map((item) =>
-        revokeDevice(
+    const results: Array<{ status: "fulfilled" } | { status: "rejected"; reason: unknown }> = [];
+    for (const item of targets) {
+      try {
+        await revokeDevice(
           item.dashboard?.instanceId || "",
           item.plugins.map((plugin) => plugin.pluginInstanceId),
-        ),
-      ),
-    );
-    const failed = targets.filter(
-      (_, index) => results[index].status === "rejected",
-    );
-    const currentIndex = targets.findIndex(
-      (item) => item.dashboard?.instanceId === currentInstanceId,
-    );
+        );
+        results.push({ status: "fulfilled" });
+      } catch (reason) {
+        results.push({ status: "rejected", reason });
+      }
+    }
+    const failed = targets.filter((_, index) => results[index].status === "rejected");
+    const currentIndex = targets.findIndex((item) => item.dashboard?.instanceId === currentInstanceId);
     if (currentIndex >= 0 && results[currentIndex]?.status === "fulfilled") {
       logoutAdmin();
       navigate("/login?next=%2Fadmin&deviceRemoved=1", { replace: true });
