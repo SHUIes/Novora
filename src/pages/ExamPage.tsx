@@ -21,6 +21,7 @@ import { getDesignId, resolveManagedDesign, setDesignId } from '../utils/designP
 import { getCachedDeviceBinding, getClassBindingInstanceId } from '../services/classBinding';
 import DesignSwitcher from '../components/DesignSwitcher';
 import ExamAnnouncementOverlay from '../components/ExamAnnouncementOverlay';
+import LoadingState from '../components/LoadingState';
 import { fetchAnnouncements } from '../services/announcements';
 import type { Announcement } from '../services/announcements';
 import type { ExamViewModel, ExamPhaseVM, Urgency } from '../designs/types';
@@ -142,6 +143,7 @@ function BoundExamPage() {
     const initialization = getAppSettings().exam.initialization;
     return initialization.schoolFullName || initialization.schoolName || '';
   });
+  const [schoolLogo, setSchoolLogo] = useState<string>(() => getAppSettings().exam.initialization.schoolLogo ?? "");
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -150,14 +152,16 @@ function BoundExamPage() {
   const examLiveRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 数据链接：30s Neon 同步，所有设计共用同一份数据（含提醒管理配置）
-  const { refresh: refreshExamData, syncState: examDataSyncState, lastSyncAt: examDataLastSyncAt, hasPendingSync } = useExamSync({
-    intervalMs: 30000,
+  // 数据链接：考试前端保持快速同步，后台切换分科模式后无需手动刷新。
+  const { refresh: refreshExamData, syncState: examDataSyncState, lastSyncAt: examDataLastSyncAt, hasPendingSync, syncError } = useExamSync({
+    intervalMs: 5000,
+    minRefreshMs: 3000,
     onUpdate: ({ items: newItems, title: newTitle, alerts: newAlerts }) => {
       setItems(getResolvedExamItems()); if (newTitle) setTitle(newTitle);
       if (newAlerts) setAlerts(newAlerts);
       const initialization = getAppSettings().exam.initialization;
       setSchoolName(initialization.schoolFullName || initialization.schoolName || '');
+      setSchoolLogo(initialization.schoolLogo ?? '');
       const current = getAppSettings().exam;
       const assigned = resolveManagedDesign(current.designPolicy, current.selectedGradeId, current.selectedClassId, getClassBindingInstanceId());
       setManagedDesign(Boolean(assigned));
@@ -374,7 +378,7 @@ function BoundExamPage() {
   return (
     <div className="exam-root">
       <TemporaryExamLauncher formalItems={getResolvedSchedule(nowTick).activeItems} externalOpen={temporaryOpen} onExternalHandled={() => setTemporaryOpen(false)} />
-      <Suspense fallback={<div className="exam-design-loading">正在载入展示设计…</div>}><Design
+      <Suspense fallback={<LoadingState kind="design" />}><Design
         vm={vm}
         onDismissNotification={dismiss}
         onBack={() => navigate('/')}
@@ -396,7 +400,11 @@ function BoundExamPage() {
         <div className="exam-context-bar__identity">
           {schoolName && (
             <div className="exam-school-name" title={schoolName}>
-              <School aria-hidden="true" />
+              {schoolLogo ? (
+                <img className="exam-school-logo" src={schoolLogo} alt="" />
+              ) : (
+                <School aria-hidden="true" />
+              )}
               <span>{schoolName}</span>
             </div>
           )}
@@ -408,6 +416,7 @@ function BoundExamPage() {
             state={examDataSyncState}
             lastSyncAt={examDataLastSyncAt}
             hasPendingSync={hasPendingSync}
+            syncError={syncError}
             onRefresh={() => { void refreshExamData(true); }}
           />
         </div>

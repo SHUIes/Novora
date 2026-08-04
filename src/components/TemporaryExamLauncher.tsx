@@ -23,18 +23,9 @@ import { confirmDialog } from "../services/appDialog";
 import { DateTimeField } from "./touch-datetime-picker";
 import SubjectIcon from "./SubjectIcon";
 import TimeRangePickerModal from "./TimeRangePickerModal";
+import { COMMON_EXAM_SUBJECTS } from "../data/subjects";
 
-const COMMON_SUBJECTS = [
-  "语文",
-  "数学",
-  "英语",
-  "物理",
-  "化学",
-  "生物",
-  "政治",
-  "历史",
-  "地理",
-];
+const COMMON_SUBJECTS = COMMON_EXAM_SUBJECTS;
 const DURATION_PRESETS = [45, 60, 75, 90, 120, 150];
 const DELAY_PRESETS = [5, 10, 15, 30];
 const isoLocal = (value: number) =>
@@ -86,7 +77,7 @@ export default function TemporaryExamLauncher({
   const [mode, setMode] = useState<"now" | "delay" | "specific">("now");
   const [delay, setDelay] = useState(10);
   const [duration, setDuration] = useState(45);
-  const [nowStartMs, setNowStartMs] = useState(() => Date.now());
+  const [nowStartMs, setNowStartMs] = useState(() => Date.now() + 60_000);
   const [specificDate, setSpecificDate] = useState(() =>
     dateKey(nextFiveMinutes()),
   );
@@ -94,6 +85,7 @@ export default function TemporaryExamLauncher({
     timeKey(nextFiveMinutes()),
   );
   const [timeRangeOpen, setTimeRangeOpen] = useState(false);
+  const timeRangeAnchorRef = useRef<HTMLButtonElement | null>(null);
   const timeRangeSnapshotRef = useRef<null | { mode: "now" | "delay" | "specific"; delay: number; duration: number; specificDate: string; specificTime: string; crossDayConfirmed: boolean }>(null);
   const [crossDayConfirmed, setCrossDayConfirmed] = useState(false);
   const [priority, setPriority] = useState(false);
@@ -166,12 +158,21 @@ export default function TemporaryExamLauncher({
         duration < 5 ||
         (dateKey(startMs) !== dateKey(endMs) && !crossDayConfirmed))
     ) {
-      notify("error", dateKey(startMs) !== dateKey(endMs) && !crossDayConfirmed
-        ? "本场考试会跨日，请在时间设置中勾选启用跨日考试。"
-        : "请检查开始时间和考试时长。");
+      const timeAlreadyPassed =
+        Number.isFinite(startMs) && startMs < Date.now() - 60_000;
+      const crossDayUnconfirmed =
+        dateKey(startMs) !== dateKey(endMs) && !crossDayConfirmed;
+      notify(
+        "error",
+        timeAlreadyPassed
+          ? "开始时间已过，请重新选择未来的时间。"
+          : crossDayUnconfirmed
+            ? "本场考试会跨日，请在时间设置中勾选启用跨日考试。"
+            : "请检查开始时间和考试时长。",
+      );
       return;
     }
-    if (step === 0) setNowStartMs(Date.now());
+    if (step === 0) setNowStartMs(Date.now() + (mode === "now" ? 60_000 : 0));
     setStep((value) => Math.min(2, value + 1));
   };
   const create = async () => {
@@ -373,7 +374,7 @@ export default function TemporaryExamLauncher({
                         <legend>开始方式</legend>
                         <button
                           className={mode === "now" ? "is-active" : ""}
-                          onClick={() => { setNowStartMs(Date.now()); setMode("now"); setCrossDayConfirmed(false); }}
+                          onClick={() => { setNowStartMs(Date.now() + 60_000); setMode("now"); setCrossDayConfirmed(false); }}
                         >
                           立即开始
                         </button>
@@ -454,7 +455,7 @@ export default function TemporaryExamLauncher({
                           </strong>
                           <small>共 {formatDuration(duration)}</small>
                         </div>
-                        <button type="button" onClick={openTimeRange}>自定义时间</button>
+                        <button ref={timeRangeAnchorRef} type="button" onClick={openTimeRange}>自定义时间</button>
                       </div>
                     </section>
                   )}
@@ -563,6 +564,7 @@ export default function TemporaryExamLauncher({
         contextLabel={dateKey(startMs)}
         presets={DURATION_PRESETS}
         initialCrossDay={crossDayConfirmed}
+        anchorRef={timeRangeAnchorRef}
         onPreviewChange={applyTimeRangeDraft}
         onCancel={cancelTimeRange}
         onConfirm={(startTime, endTime, endNextDay) => {
