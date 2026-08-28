@@ -1,6 +1,6 @@
 {
   "name": "novora",
-  "version": "2.7.2",
+  "version": "2.7.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,11 +18,11 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-        "serve:build": "tsc -p tsconfig.server.json",
-        "start": "node server-build/server/serve.js",
-        "serve": "npm run build && npm run serve:build && node server-build/server/serve.js",
-        "docker:up": "docker compose up -d --build",
-        "docker:down": "docker compose down",
+    "serve:build": "tsc -p tsconfig.server.json",
+    "start": "node server-build/server/serve.js",
+    "serve": "npm run build && npm run serve:build && node server-build/server/serve.js",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
     "update:local": "node scripts/update-local.cjs"
   },
   "dependencies": {
@@ -31,14 +31,16 @@
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.468.0",
+    "nodemailer": "^9.0.5",
+    "pg": "^8.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.2",
-    "nodemailer": "^6.9.16"
+    "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/react-test-renderer": "^18.3.1",

@@ -24,9 +24,17 @@ export interface UpdateInfo {
 
 export async function checkForUpdate(current: string): Promise<UpdateInfo> {
   try {
-    const res = await fetch(`${CHECK_URL}?current=${encodeURIComponent(current)}`, {
-      headers: { 'Cache-Control': 'no-store' },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    let res: Response;
+    try {
+      res = await fetch(`${CHECK_URL}?current=${encodeURIComponent(current)}`, {
+        headers: { 'Cache-Control': 'no-store' },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.ok) {
       return { ok: false, current, latest: null, hasUpdate: false, error: data?.error || `HTTP ${res.status}` };
@@ -39,19 +47,19 @@ export async function checkForUpdate(current: string): Promise<UpdateInfo> {
 
 export interface DeployStatus {
   configured: boolean;
-  deployTarget: "vercel" | "local";
+  deployTarget: 'vercel' | 'local';
 }
 
 export async function getDeployStatus(): Promise<DeployStatus> {
   try {
-    const res = await fetch(REDEPLOY_URL, { headers: { "Cache-Control": "no-store" } });
+    const res = await fetch(REDEPLOY_URL, { headers: { 'Cache-Control': 'no-store' } });
     const data = await res.json().catch(() => null);
     return {
       configured: !!data?.configured,
-      deployTarget: data?.deployTarget === "vercel" ? "vercel" : "local",
+      deployTarget: data?.deployTarget === 'vercel' ? 'vercel' : 'local',
     };
   } catch {
-    return { configured: false, deployTarget: "local" };
+    return { configured: false, deployTarget: 'local' };
   }
 }
 
