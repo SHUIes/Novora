@@ -77,12 +77,58 @@
       "destination": "/api/system?sys=email-worker"
     },
     {
+      "source": "/api/diagnostic-worker",
+      "destination": "/api/system?sys=diagnostic-worker"
+    },
+    {
+      "source": "/api/time",
+      "destination": "/api/system?sys=time"
+    },
+    {
+      "source": "/api/update-check",
+      "destination": "/api/system?sys=update-check"
+    },
+    {
+      "source": "/api/redeploy",
+      "destination": "/api/system?sys=redeploy"
+    },
+    {
+      "source": "/api/error-report",
+      "destination": "/api/telemetry?sys=error-report"
+    },
+    {
+      "source": "/api/announcement-images",
+      "destination": "/api/announcements"
+    },
+    {
+      "source": "/api/platform-usage",
+      "destination": "/api/system?sys=platform-usage"
+    },
+    {
+      "source": "/api/platform-usage-config",
+      "destination": "/api/system?sys=platform-usage-config"
+    },
+    {
+      "source": "/api/platform-usage-refresh",
+      "destination": "/api/system?sys=platform-usage-refresh"
+    },
+    {
+      "source": "/api/platform-usage-worker",
+      "destination": "/api/system?sys=platform-usage-worker"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },
     {
       "source": "/(.*)",
       "destination": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/platform-usage-worker",
+      "schedule": "0 1 * * *"
     }
   ]
 }

@@ -14,16 +14,11 @@ import { mirrorAppSettings } from '../services/offlineStore.js';
 import type { SchoolClass, SchoolGrade } from '../types/school.js';
 import type { TimeSyncSettings } from './settings/timeSync.js';
 import { DEFAULT_TIME_SYNC_SETTINGS } from './settings/timeSync.js';
-import type { TypographyFontId, TypographySettings } from './settings/typography.js';
+import type { TypographySettings } from './settings/typography.js';
 import { DEFAULT_TYPOGRAPHY } from './settings/typography.js';
 import type { MotionMode } from './settings/motion.js';
 import { DEFAULT_MOTION_MODE } from './settings/motion.js';
-import type {
-  MajorBatchSubjectGroup,
-  MajorBatchTimeSlot,
-  MajorBatchTimeGroup,
-  MajorBatchSettings,
-} from './settings/majorBatch.js';
+import type { MajorBatchSubjectGroup, MajorBatchTimeGroup, MajorBatchSettings } from './settings/majorBatch.js';
 import { DEFAULT_MAJOR_BATCH_SETTINGS, normalizeMajorBatchSettings } from './settings/majorBatch.js';
 import { DEFAULT_DESIGN_POLICY, normalizeDesignPolicy } from './settings/design.js';
 import type { InitializationState } from './settings/school.js';
@@ -194,6 +189,12 @@ export function genMajorId(): string {
   return `major_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** 时间戳字段归一：合法数字原样、null 保持 null、其它（含缺失）视为 undefined。 */
+function nullableNumber(value: unknown): number | null | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  return value === null ? null : undefined;
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
   version: 4,
   hasVisited: false,
@@ -241,10 +242,12 @@ export function normalizeExam(raw: unknown): ExamSettings {
     ...(src as object),
   };
 
-  let majors: MajorExam[] = Array.isArray(src.majors) ? src.majors.filter(Boolean) : [];
+  const hasExplicitMajors = Array.isArray(src.majors);
+  let majors: MajorExam[] = hasExplicitMajors ? src.majors!.filter(Boolean) : [];
 
   // 旧版迁移：仅有 items/title 时，包装为单个大型考试。
-  if (majors.length === 0) {
+  // 服务端明确返回 majors: [] 时代表当前没有考试，必须保留空数组，不能再补一个“空考试”。
+  if (!hasExplicitMajors && majors.length === 0) {
     const legacyItems = Array.isArray(src.items) ? src.items : [];
     majors = [
       {
@@ -258,6 +261,16 @@ export function normalizeExam(raw: unknown): ExamSettings {
 
   majors = majors
     .map((m, i) => ({
+      /**
+       * 先摊平原对象再补默认值/归一化：规范化只负责"把已知字段修成合法形状"，
+       * **不能把服务端写入的生命周期字段（publishedAt / pausedAt / pausedMs / endAt /
+       * actualStartAt / archivedAt / draft…）丢掉**——它们不是客户端编辑出来的，
+       * 丢了会出现两类问题：
+       *   1) 教室端读本地快照，看不到暂停/延长/结束/归档（后台改了、大屏没反应）；
+       *   2) 每次普通保存都把归档考试判成"被改过"，后台反复弹「已归档：修改没有生效」。
+       * 未知字段一并保留，避免服务端加了新字段后被这里静默截断。
+       */
+      ...m,
       id: m.id || genMajorId(),
       name: m.name || `考试${i + 1}`,
       items: normalizeExamItems(Array.isArray(m.items) ? m.items : []),
@@ -267,16 +280,26 @@ export function normalizeExam(raw: unknown): ExamSettings {
       source: m.source === 'quick' ? ('quick' as const) : ('regular' as const),
       temporary: m.temporary === true || m.source === 'quick',
       priorityOverSchedule: m.priorityOverSchedule === true,
+      draft: m.draft === true ? true : undefined,
       createdAt: Number.isFinite(m.createdAt) ? Number(m.createdAt) : undefined,
       createdBy: Number.isFinite(m.createdBy) ? Number(m.createdBy) : undefined,
-      endedAt: Number.isFinite(m.endedAt) ? Number(m.endedAt) : null,
+      // 生命周期时间戳：保留 null 与"缺失"的区别（服务端带排序以外的比较口径依赖它）。
+      startAt: nullableNumber(m.startAt),
+      endAt: nullableNumber(m.endAt),
+      actualStartAt: nullableNumber(m.actualStartAt),
+      actualEndAt: nullableNumber(m.actualEndAt),
+      pausedAt: nullableNumber(m.pausedAt),
+      pausedMs: Number.isFinite(m.pausedMs) ? Math.max(0, Number(m.pausedMs)) : undefined,
+      publishedAt: nullableNumber(m.publishedAt),
+      endedAt: nullableNumber(m.endedAt),
+      archivedAt: nullableNumber(m.archivedAt),
     }))
     .sort((a, b) => a.order - b.order)
     .map((m, i) => ({ ...m, order: i }));
 
   let activeMajorId = src.activeMajorId || '';
-  if (!majors.some((m) => m.id === activeMajorId)) activeMajorId = majors[0].id;
-  const active = majors.find((m) => m.id === activeMajorId) ?? majors[0];
+  if (!majors.some((m) => m.id === activeMajorId)) activeMajorId = majors[0]?.id ?? '';
+  const active = majors.find((m) => m.id === activeMajorId);
 
   // ===== v1.24.0 周测字段 =====
   const scheduleMode: ScheduleMode = ALL_SCHEDULE_MODES.includes(src.scheduleMode as ScheduleMode)
@@ -330,8 +353,8 @@ export function normalizeExam(raw: unknown): ExamSettings {
     initialization,
     weeklyConflictPolicy,
     // items/title 始终镜像激活大型考试，保证展示端无需改动。
-    title: active.name,
-    items: active.items,
+    title: active?.name ?? (hasExplicitMajors ? (src.title ?? '') : ''),
+    items: active?.items ?? [],
   };
 }
 
@@ -398,7 +421,16 @@ export function updateAppSettings(partial: Partial<AppSettings> | ((c: AppSettin
 }
 
 export function updateExamSettings(updates: Partial<ExamSettings>): void {
-  updateAppSettings((c) => ({ exam: normalizeExam({ ...c.exam, ...updates }) }));
+  updateAppSettings((c) => {
+    const merged: Partial<ExamSettings> = { ...c.exam, ...updates };
+    // DEFAULT_SETTINGS 使用空 majors 表示“尚未初始化”。只有调用方明确传入
+    // majors: [] 时才表示云端权威快照中的“当前没有考试”，否则继续兼容旧版
+    // 仅保存 title/items 的数据迁移。
+    if (!Object.prototype.hasOwnProperty.call(updates, 'majors') && c.exam.majors.length === 0) {
+      delete merged.majors;
+    }
+    return { exam: normalizeExam(merged) };
+  });
 }
 
 export function updateMajorBatchSettings(updates: Partial<MajorBatchSettings>): void {
